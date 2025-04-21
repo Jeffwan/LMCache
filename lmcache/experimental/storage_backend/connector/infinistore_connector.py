@@ -76,8 +76,8 @@ class InfinistoreConnector(RemoteConnector):
             self.send_buffers.append(send_buffer)
             self.send_queue.put_nowait(i)
 
-            recv_buffer = bytearray(self.buffer_size)
-            self.rdma_conn.register_mr(_get_ptr(recv_buffer), self.buffer_size)
+            recv_buffer = torch.empty(self.buffer_size, dtype=torch.uint8, pin_memory=True)
+            self.rdma_conn.register_mr(recv_buffer.data_ptr(), self.buffer_size)
             self.recv_buffers.append(recv_buffer)
             self.recv_queue.put_nowait(i)
 
@@ -96,20 +96,20 @@ class InfinistoreConnector(RemoteConnector):
         try:
             await self.rdma_conn.rdma_read_cache_async([(key_str, 0)],
                                                        self.buffer_size,
-                                                       _get_ptr(buffer))
+                                                       buffer.data_ptr())
         except Exception as e:
             logger.warning(f"get failed: {e}")
             self.recv_queue.put_nowait(buf_idx)
             return None
 
-        metadata = RedisMetadata.deserialize(buffer)
+        metadata = RedisMetadata.deserialize(memoryview(buffer.numpy()))
 
         def callback():
             self.recv_queue.put_nowait(buf_idx)
 
         num_elements = reduce(operator.mul, metadata.shape)
         assert metadata.dtype is not None
-        temp_tensor = torch.frombuffer(buffer,
+        temp_tensor = torch.frombuffer(memoryview(buffer.numpy),
                                        dtype=metadata.dtype,
                                        offset=METADATA_BYTES_LEN,
                                        count=num_elements).reshape(
