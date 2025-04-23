@@ -203,16 +203,6 @@ class TensorMemoryObj(MemoryObj):
         return memoryview(byte_array)
 
 
-class CopyLessMemoryObj(TensorMemoryObj):
-
-    def __init__(self, raw_data, metadata, callback):
-        super().__init__(raw_data, metadata)
-        self.callback = callback
-
-    def __del__(self):
-        self.callback()
-
-
 class BytesBufferMemoryObj(MemoryObj):
     """
     Wraps a raw flat tensor with some metadata

@@ -21,7 +21,7 @@ from typing import List, Optional, Union, no_type_check
 import infinistore
 import torch
 
-from lmcache.experimental.memory_management import (CopyLessMemoryObj,
+from lmcache.experimental.memory_management import (TensorMemoryObj,
                                                     MemoryAllocatorInterface,
                                                     MemoryObjMetadata,
                                                     MemoryObj)
@@ -71,6 +71,7 @@ class InfinistoreConnector(RemoteConnector):
             maxsize=MAX_BUFFER_CNT)
 
         self.buffer_size = MAX_BUFFER_SIZE
+        self.memory_allocator = memory_allocator
         for i in range(MAX_BUFFER_CNT):
             send_buffer = bytearray(self.buffer_size)
             self.rdma_conn.register_mr(_get_ptr(send_buffer), self.buffer_size)
@@ -103,35 +104,28 @@ class InfinistoreConnector(RemoteConnector):
             self.recv_queue.put_nowait(buf_idx)
             return None
 
-        redis_metadata = RedisMetadata.deserialize(buffer)
-        metadata = MemoryObjMetadata(shape=redis_metadata.shape,
-                                    dtype=redis_metadata.dtype,
-                                    address=0,
-                                    phy_size=0,
-                                    ref_count=1,
-                                    fmt=redis_metadata.fmt)
-
-
-        def callback():
-            self.recv_queue.put_nowait(buf_idx)
-
+        metadata = RedisMetadata.deserialize(buffer)
         num_elements = reduce(operator.mul, metadata.shape)
         assert metadata.dtype is not None
-        raw_tensor = torch.frombuffer(buffer,
+        temp_tensor = torch.frombuffer(buffer,
                                        dtype=metadata.dtype,
                                        offset=METADATA_BYTES_LEN,
                                        count=num_elements).reshape(
                                            metadata.shape)
 
-        # temporary fix for cuda or cpu pinned
-        temp_tensor = torch.empty_like(raw_tensor, pin_memory=True)
-        temp_tensor.copy_(raw_tensor)
+        memory_obj = self.memory_allocator.allocate(
+            metadata.shape,
+            metadata.dtype,
+            metadata.fmt,
+        )
 
-        memory_obj = CopyLessMemoryObj(raw_data=temp_tensor,
-                                       metadata=metadata,
-                                       callback=callback)
+        # deep copy to pinned memory
+        # and hot cache will reference this memory obj
+        memory_obj.tensor.copy_(temp_tensor)
 
         logger.debug(f"get key: {key_str} done, {memory_obj.get_shape()}")
+        self.recv_queue.put_nowait(buf_idx)
+
         return memory_obj
 
     async def put(self, key: CacheEngineKey, memory_obj: MemoryObj):
