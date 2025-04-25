@@ -535,6 +535,10 @@ def lmcache_retrieve_kv(
     seq_group_list = model_input.sampling_metadata.seq_groups
     assert seq_group_list is not None
 
+    expected_len = sum(len(g.seq_ids) for g in seq_group_list)
+    assert len(retrieve_status) == expected_len, \
+        f"retrieve_status length {len(retrieve_status)} does not match number of sequences {expected_len}"
+
     chunk_prefill_full_hit = True
     for seq_group in seq_group_list:
         seq_ids = seq_group.seq_ids
