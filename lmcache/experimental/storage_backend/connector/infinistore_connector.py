@@ -121,9 +121,10 @@ class InfinistoreConnector(RemoteConnector):
 
         # deep copy to pinned memory
         # and hot cache will reference this memory obj
-        memory_obj.tensor.copy_(temp_tensor)
+        if memory_obj:
+            memory_obj.tensor.copy_(temp_tensor)
+            logger.debug(f"get key: {key_str} done, {memory_obj.get_shape()}")
 
-        logger.debug(f"get key: {key_str} done, {memory_obj.get_shape()}")
         self.recv_queue.put_nowait(buf_idx)
 
         return memory_obj
